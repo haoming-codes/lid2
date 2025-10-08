@@ -1,0 +1,9 @@
+transformers[torch]
+torchaudio
+torchvision
+datasets[audio]
+evaluate
+scikit-learn
+soundfile
+fsspec>=2024.6.0
+s3fs>=2024.6.0
