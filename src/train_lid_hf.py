@@ -1,10 +1,11 @@
+import argparse
 import os, json, glob, math
 from typing import Dict, List
 from dataclasses import dataclass
 
 import numpy as np
 import torch
-from datasets import Dataset, Audio, set_caching_enabled
+from datasets import Dataset, Audio
 from transformers import (
     AutoProcessor,
     Wav2Vec2ForSequenceClassification,
@@ -13,24 +14,73 @@ from transformers import (
 )
 from sklearn.metrics import accuracy_score, f1_score
 
+
+def str2bool(value):
+    if isinstance(value, bool):
+        return value
+    value = value.lower()
+    if value in ("1", "true", "t", "yes", "y"):
+        return True
+    if value in ("0", "false", "f", "no", "n"):
+        return False
+    raise argparse.ArgumentTypeError(f"Cannot interpret '{value}' as boolean")
+
 # ---------- SageMaker channels ----------
 SM_CHANNEL_TRAIN = os.environ.get("SM_CHANNEL_TRAIN")        # e.g. /opt/ml/input/data/train
 SM_CHANNEL_VALID = os.environ.get("SM_CHANNEL_VALIDATION")   # e.g. /opt/ml/input/data/validation
 
 def find_manifest(base_dir: str, manifest_name: str) -> str:
-    # Look for the manifest file *inside* the channel directory
-    matches = glob.glob(os.path.join(base_dir, "**", manifest_name), recursive=True)
-    if not matches:
-        # Fallback: any .json/.jsonl in the channel
-        matches = glob.glob(os.path.join(base_dir, "**", "*.json*"), recursive=True)
-    if not matches:
-        raise FileNotFoundError(f"Could not find a manifest under {base_dir}")
-    return matches[0]
+    """Locate a manifest file for the given channel.
+
+    The training job normally provides ``SM_CHANNEL_*`` directories that contain
+    the manifest files.  When running the script locally (e.g., for debugging),
+    those directories might not exist and the user may instead pass an absolute
+    or relative path.  This helper tries a few sensible fallbacks before giving
+    up so that the script works in both environments and the resulting error
+    message is more actionable.
+    """
+
+    search_roots = []
+    if manifest_name and os.path.isfile(manifest_name):
+        return manifest_name
+
+    if base_dir:
+        if manifest_name:
+            direct = os.path.join(base_dir, manifest_name)
+            if os.path.isfile(direct):
+                return direct
+        if os.path.isdir(base_dir):
+            search_roots.append(base_dir)
+
+    # Also look in the current working tree.  This lets us run the script
+    # locally with manifests that live next to the code checkout.
+    search_roots.append(os.getcwd())
+
+    candidates = []
+    for root in search_roots:
+        if manifest_name:
+            candidates.extend(glob.glob(os.path.join(root, "**", manifest_name), recursive=True))
+        if not candidates:
+            candidates.extend(glob.glob(os.path.join(root, "**", "*.json*"), recursive=True))
+        if candidates:
+            break
+
+    if not candidates:
+        looked_in = ", ".join(sorted(set(search_roots))) or "<none>"
+        raise FileNotFoundError(
+            f"Could not find a manifest named '{manifest_name}' (searched: {looked_in})."
+        )
+
+    return candidates[0]
 
 def s3_to_local(s3_uri: str, channel_dir: str) -> str:
     # s3://bucket/key -> /opt/ml/input/data/<channel>/key
     key = s3_uri.split("/", 3)[-1]
-    return os.path.join(channel_dir, key)
+    if channel_dir:
+        return os.path.join(channel_dir, key)
+    # When we do not have a channel directory (e.g., local debugging), fall back
+    # to the key itself so the caller can decide how to handle it.
+    return key
 
 def read_jsonl(path: str):
     with open(path, "r") as f:
@@ -59,7 +109,6 @@ def make_label_maps(rows: List[Dict]):
     return label2id, id2label
 
 def main():
-    import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--model_name", type=str, default="facebook/mms-lid-126")
     ap.add_argument("--sr", type=int, default=16000)
@@ -72,7 +121,7 @@ def main():
     ap.add_argument("--epochs", type=int, default=5)
     ap.add_argument("--batch_size", type=int, default=16)
     ap.add_argument("--lr", type=float, default=5e-5)
-    ap.add_argument("--fp16", action="store_true")
+    ap.add_argument("--fp16", type=str2bool, nargs="?", const=True, default=False)
     ap.add_argument("--output_dir", type=str, default="/opt/ml/model")
     args = ap.parse_args()
 
@@ -90,7 +139,6 @@ def main():
     # 4) Hugging Face Datasets with on-demand decoding
     train_ds = Dataset.from_list(train_rows).cast_column("audio", Audio(sampling_rate=args.sr))
     eval_ds  = Dataset.from_list(eval_rows).cast_column("audio",  Audio(sampling_rate=args.sr))
-    set_caching_enabled(True)
 
     # 5) Processor & featurization (pad/truncate to fixed seconds so we can avoid a custom collator)
     processor = AutoProcessor.from_pretrained(args.model_name)
