@@ -43,6 +43,7 @@ est = PyTorch(
         "fp16": True,
         "output_dir": "/opt/ml/model",
     },
+    dependencies=["requirements.txt"],
 )
 
 inputs = {
