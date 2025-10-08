@@ -1,3 +1,4 @@
+import argparse
 import os, json, glob, math
 from typing import Dict, List
 from dataclasses import dataclass
@@ -12,6 +13,17 @@ from transformers import (
     Trainer,
 )
 from sklearn.metrics import accuracy_score, f1_score
+
+
+def str2bool(value):
+    if isinstance(value, bool):
+        return value
+    value = value.lower()
+    if value in ("1", "true", "t", "yes", "y"):
+        return True
+    if value in ("0", "false", "f", "no", "n"):
+        return False
+    raise argparse.ArgumentTypeError(f"Cannot interpret '{value}' as boolean")
 
 # ---------- SageMaker channels ----------
 SM_CHANNEL_TRAIN = os.environ.get("SM_CHANNEL_TRAIN")        # e.g. /opt/ml/input/data/train
@@ -97,7 +109,6 @@ def make_label_maps(rows: List[Dict]):
     return label2id, id2label
 
 def main():
-    import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--model_name", type=str, default="facebook/mms-lid-126")
     ap.add_argument("--sr", type=int, default=16000)
@@ -110,7 +121,7 @@ def main():
     ap.add_argument("--epochs", type=int, default=5)
     ap.add_argument("--batch_size", type=int, default=16)
     ap.add_argument("--lr", type=float, default=5e-5)
-    ap.add_argument("--fp16", action="store_true")
+    ap.add_argument("--fp16", type=str2bool, nargs="?", const=True, default=False)
     ap.add_argument("--output_dir", type=str, default="/opt/ml/model")
     args = ap.parse_args()
 
