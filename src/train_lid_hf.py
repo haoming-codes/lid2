@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
-from datasets import Dataset, Audio, set_caching_enabled
+from datasets import Dataset, Audio
 from transformers import (
     AutoProcessor,
     Wav2Vec2ForSequenceClassification,
@@ -139,7 +139,6 @@ def main():
     # 4) Hugging Face Datasets with on-demand decoding
     train_ds = Dataset.from_list(train_rows).cast_column("audio", Audio(sampling_rate=args.sr))
     eval_ds  = Dataset.from_list(eval_rows).cast_column("audio",  Audio(sampling_rate=args.sr))
-    set_caching_enabled(True)
 
     # 5) Processor & featurization (pad/truncate to fixed seconds so we can avoid a custom collator)
     processor = AutoProcessor.from_pretrained(args.model_name)
